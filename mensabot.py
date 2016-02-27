@@ -10,9 +10,15 @@ from collections import namedtuple
 from time import sleep
 import sys
 
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
+from apscheduler.jobstores.base import JobLookupError, ConflictingIdError
+
 Message = namedtuple(
     'Result', ['chat_id', 'update_id', 'text', 'timestamp']
 )
+
+menu = {}
 
 log = logging.getLogger('mensabot')
 log.setLevel(logging.INFO)
@@ -36,6 +42,9 @@ WEEKDAYS = [
 DELTA_T = dt.timedelta(minutes=5)
 URL = 'http://www.stwdo.de/gastronomie/speiseplaene/' \
       'hauptmensa/wochenansicht-hauptmensa'
+
+BOT_URL = 'https://api.telegram.org/bot{token}'.format(token=sys.argv[1])
+
 
 
 def replace_all(regex, string, repl):
@@ -79,7 +88,6 @@ def parse_counter(table):
 
 
 def fetch_weekly_menu():
-
     ret = requests.get(URL)
     soup = BeautifulSoup(
         ret.content.decode('utf-8'),
@@ -94,109 +102,154 @@ def fetch_weekly_menu():
     return menu
 
 
-class MensaBot(Thread):
-    url = 'https://api.telegram.org/bot{token}'
+def format_menu(date):
+    global menu
+    # saturday and sunday
+    if date.weekday() >= 5:
+        return 'Am Wochenende bleibt die Mensaküche kalt'
 
-    def __init__(self, bot_token):
-        self.url = self.url.format(token=bot_token)
+    if date not in menu:
+        try:
+            menu = fetch_weekly_menu()
+        except:
+            log.exception('Parsing Error')
+            return 'Kein Menü gefunden'
+
+    if date not in menu:
+        return 'Nix gefunden für den {:%d.%m.%Y}'.format(date)
+
+    text = ''
+    menu = menu[date].query('counter != "Grillstation"')
+    for row in menu.itertuples():
+        text += '*{}*: {} \n'.format(row.counter, row.gericht)
+
+    return text
+
+
+def getUpdates():
+    ret = requests.get(BOT_URL + '/getUpdates', timeout=5)
+    ret = ret.json()
+
+    if ret['ok']:
+        messages = []
+        for update in ret['result']:
+            message_data = update['message']
+            chatdata = message_data['chat']
+
+            message = Message(
+                update_id=update['update_id'],
+                chat_id=chatdata['id'],
+                text=message_data.get('text', ''),
+                timestamp=dt.datetime.fromtimestamp(message_data['date'])
+            )
+            messages.append(message)
+        return messages
+
+
+def confirm_message(message):
+    requests.get(
+        BOT_URL + '/getUpdates',
+        params={'offset': message.update_id + 1},
+        timeout=5,
+    )
+
+
+def send_menu(chat_id):
+    now = dt.datetime.now()
+    date = dt.date.today()
+    if now.hour >= 15:
+        date += dt.timedelta(days=1)
+
+    menu = format_menu(date)
+    send_message(
+        chat_id,
+        menu,
+    )
+    log.info('Send menu for {:%Y-%m-%d} to {}'.format(
+        date, chat_id
+    ))
+
+
+def send_message(chat_id, message):
+    try:
+        r = requests.post(
+            BOT_URL + '/sendMessage',
+            data={
+                'chat_id': chat_id,
+                'text': message,
+                'parse_mode': 'Markdown'
+            },
+            timeout=5,
+        )
+    except requests.exceptions.Timeout:
+        log.exception('Telegram "send_message" timed out')
+    return r
+
+
+class MensaBot(Thread):
+
+    def __init__(self):
         self.stop_event = Event()
         self.menu = {}
+        self.scheduler = BackgroundScheduler(
+            logger=log,
+            jobstores={'sqlite': SQLAlchemyJobStore(url='sqlite:///clients.sqlite')}
+        )
+        self.scheduler.start()
         super().__init__()
 
     def run(self):
         while not self.stop_event.is_set():
             try:
-                messages = self.getUpdates()
-                now = dt.datetime.now()
-                date = dt.date.today()
-                if now.hour >= 15:
-                    date += dt.timedelta(days=1)
-
-                for message in messages:
-                    if dt.datetime.now() - message.timestamp < DELTA_T:
-                        if message.text.startswith('/menu'):
-                            menu = self.format_menu(date)
-                            self.send_message(
-                                message.chat_id,
-                                menu,
-                            )
-                            log.info('Send menu for {:%Y-%m-%d} to {}'.format(
-                                date, message.chat_id
-                            ))
-                    self.confirm_message(message)
+                messages = getUpdates()
+                self.handle_messages(messages)
                 self.stop_event.wait(1)
             except:
                 log.exception('Error in run()')
                 self.stop_event.wait(30)
 
-    def format_menu(self, date):
-        # saturday and sunday
-        if date.weekday() >= 5:
-            return 'Am Wochenende bleibt die Mensaküche kalt'
+    def handle_messages(self, messages):
+        for message in messages:
+            if dt.datetime.now() - message.timestamp < DELTA_T:
+                if message.text.startswith('/menu'):
+                    send_menu(message.chat_id)
 
-        if date not in self.menu:
-            try:
-                self.menu = fetch_weekly_menu()
-            except:
-                log.exception('Parsing Error')
-                return 'Kein Menü gefunden'
+            if message.text.startswith('/start'):
+                log.info('Received start message')
+                try:
+                    self.scheduler.add_job(
+                        send_menu,
+                        args=(message.chat_id, ),
+                        trigger='cron',
+                        day_of_week='mon-fri',
+                        hour=11,
+                        jobstore='sqlite',
+                        id=str(message.chat_id),
+                    )
+                    send_message(
+                        message.chat_id,
+                        'Ihr bekommt ab jetzt pünktlich um 11:00 das Menü'
+                    )
+                except ConflictingIdError:
+                    send_message(message.chat_id, 'Ihr bekommt das aktuelle Menü schon')
 
-        if date not in self.menu:
-            return 'Nix gefunden für den {:%d.%m.%Y}'.format(date)
+            elif message.text.startswith('/stop'):
+                log.info('Received stop message')
+                try:
+                    self.scheduler.remove_job(
+                        str(message.chat_id),
+                    )
+                except JobLookupError:
+                    send_message(message.chat_id, 'Ihr habt /start nicht gesendet')
 
-        text = ''
-        menu = self.menu[date].query('counter != "Grillstation"')
-        for row in menu.itertuples():
-            text += '*{}*: {} \n'.format(row.counter, row.gericht)
-
-        return text
+            confirm_message(message)
 
     def terminate(self):
         self.stop_event.set()
 
-    def getUpdates(self):
-        ret = requests.get(self.url + '/getUpdates', timeout=5).json()
-
-        if ret['ok']:
-            messages = []
-            for update in ret['result']:
-                message_data = update['message']
-                chatdata = message_data['chat']
-
-                message = Message(
-                    update_id=update['update_id'],
-                    chat_id=chatdata['id'],
-                    text=message_data.get('text', ''),
-                    timestamp=dt.datetime.fromtimestamp(message_data['date'])
-                )
-                messages.append(message)
-            return messages
-
-    def confirm_message(self, message):
-        requests.get(
-            self.url + '/getUpdates',
-            params={'offset': message.update_id + 1},
-            timeout=5,
-        )
-
-    def send_message(self, chat_id, message):
-        try:
-            r = requests.post(
-                self.url + '/sendMessage',
-                data={
-                    'chat_id': chat_id,
-                    'text': message,
-                    'parse_mode': 'Markdown'
-                },
-                timeout=5,
-            )
-        except requests.exceptions.Timeout:
-            log.exception('Telegram "send_message" timed out')
-        return r
-
 
 if __name__ == '__main__':
-    bot = MensaBot(sys.argv[1])
+    bot = MensaBot()
     bot.start()
     log.info('bot running')
     try:

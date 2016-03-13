@@ -235,6 +235,7 @@ class MensaBot(Thread):
 
             elif message.text.startswith('/stop'):
                 log.info('Received stop message')
+                send_message(message.chat_id, 'Ihr bekommt nix mehr.')
                 try:
                     self.scheduler.remove_job(
                         str(message.chat_id),

@@ -18,7 +18,7 @@ Message = namedtuple(
     'Result', ['chat_id', 'update_id', 'text', 'timestamp']
 )
 
-menu = {}
+menus = {}
 
 log = logging.getLogger('mensabot')
 log.setLevel(logging.INFO)
@@ -87,41 +87,43 @@ def parse_counter(table):
     return table
 
 
-def fetch_weekly_menu():
+def fetch_menus():
     ret = requests.get(URL)
     soup = BeautifulSoup(
         ret.content.decode('utf-8'),
         'html.parser',
     )
 
-    menu = {}
+    menus = {}
     for weekday in WEEKDAYS:
         try:
-            menu[get_date(soup, weekday)] = extract_daily_menu(soup, weekday)
+            date = get_date(soup, weekday)
+            menus[date] = extract_daily_menu(soup, weekday)
         except:
             log.exception('Parsing error for {}'.format(weekday))
 
-    return menu
+    return menus
 
 
 def format_menu(date):
-    global menu
+    global menus
+
     # saturday and sunday
     if date.weekday() >= 5:
         return 'Am Wochenende bleibt die Mensaküche kalt'
 
-    if date not in menu:
+    if date not in menus:
         try:
-            menu = fetch_weekly_menu()
+            menus = fetch_menus()
         except:
             log.exception('Parsing Error')
             return 'Kein Menü gefunden'
 
-    if date not in menu:
+    if date not in menus:
         return 'Nix gefunden für den {:%d.%m.%Y}'.format(date)
 
     text = ''
-    menu = menu[date].query('counter != "Grillstation"')
+    menu = menus[date].query('counter != "Grillstation"')
     for row in menu.itertuples():
         text += '*{}*: {} \n'.format(row.counter, row.gericht)
 

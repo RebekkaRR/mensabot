@@ -94,10 +94,12 @@ def fetch_weekly_menu():
         'html.parser',
     )
 
-    menu = {
-        get_date(soup, weekday): extract_daily_menu(soup, weekday)
-        for weekday in WEEKDAYS
-    }
+    menu = {}
+    for weekday in WEEKDAYS:
+        try:
+            menu[get_date(soup, weekday)] = extract_daily_menu(soup, weekday)
+        except:
+            log.exception('Parsing error for {}'.format(weekday))
 
     return menu
 

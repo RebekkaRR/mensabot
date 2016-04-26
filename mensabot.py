@@ -201,7 +201,8 @@ class MensaBot(Thread):
         self.menu = {}
         self.scheduler = BackgroundScheduler(
             logger=log,
-            jobstores={'sqlite': SQLAlchemyJobStore(url='sqlite:///clients.sqlite')}
+            jobstores={'sqlite': SQLAlchemyJobStore(url='sqlite:///clients.sqlite')},
+	    misfire_grace_time=15*60,  # allow jobs to be send up to 15 Minutes after scheduled time
         )
         for job in self.scheduler.get_jobs():
             log.info('Active Job: {}'.format(job))

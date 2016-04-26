@@ -1,3 +1,4 @@
 token.txt
 clients.sqlite
 __pycache__
+*.swp

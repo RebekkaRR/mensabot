@@ -9,6 +9,7 @@ import logging
 from collections import namedtuple
 from time import sleep
 import sys
+from IPython import embed
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
@@ -23,12 +24,15 @@ menus = {}
 log = logging.getLogger('mensabot')
 log.setLevel(logging.INFO)
 formatter = logging.Formatter(
-    fmt='%(asctime)s - %(levelname)s - %(name)s | %(message)s',
-    datefmt='%H:%M:%S',
+    fmt='%(asctime)s|%(levelname)s|%(name)s|%(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
 )
 stream_handler = logging.StreamHandler()
+file_handler = logging.FileHandler('mensabot.log', encoding='utf-8')
 stream_handler.setFormatter(formatter)
+file_handler.setFormatter(formatter)
 log.addHandler(stream_handler)
+log.addHandler(file_handler)
 
 ingredients_re = re.compile('[(]([0-9]+,? ?)+[)] *')
 WEEKDAYS = [
@@ -199,6 +203,8 @@ class MensaBot(Thread):
             logger=log,
             jobstores={'sqlite': SQLAlchemyJobStore(url='sqlite:///clients.sqlite')}
         )
+        for job in self.scheduler.get_jobs():
+            log.info('Active Job: {}'.format(job))
         self.scheduler.start()
         super().__init__()
 

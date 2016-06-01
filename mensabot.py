@@ -50,7 +50,6 @@ URL = 'http://www.stwdo.de/gastronomie/speiseplaene/' \
 BOT_URL = 'https://api.telegram.org/bot{token}'.format(token=sys.argv[1])
 
 
-
 def replace_all(regex, string, repl):
     old = ''
     while old != string:
@@ -201,12 +200,15 @@ class MensaBot(Thread):
         self.menu = {}
         self.scheduler = BackgroundScheduler(
             logger=log,
-            jobstores={'sqlite': SQLAlchemyJobStore(url='sqlite:///clients.sqlite')},
-	    job_defaults={'misfire_grace_time':15*60},
+            jobstores={'sqlite': SQLAlchemyJobStore(
+                url='sqlite:///clients.sqlite')},
+            job_defaults={'misfire_grace_time': 15 * 60},
         )
-        for job in self.scheduler.get_jobs():
-            log.info('Active Job: {}'.format(job))
         self.scheduler.start()
+        for job in self.scheduler.get_jobs():
+            log.info('Active Job: {}'.format(job.id))
+            self.scheduler.modify_job(job.id, 'sqlite', misfire_grace_time=15*60)
+
         super().__init__()
 
     def run(self):
@@ -238,13 +240,15 @@ class MensaBot(Thread):
                         hour=11,
                         jobstore='sqlite',
                         id=str(message.chat_id),
+			misfire_grace_time=15 * 60,
                     )
                     send_message(
                         message.chat_id,
                         'Ihr bekommt ab jetzt pünktlich um 11:00 das Menü'
                     )
                 except ConflictingIdError:
-                    send_message(message.chat_id, 'Ihr bekommt das aktuelle Menü schon')
+                    send_message(message.chat_id,
+                                 'Ihr bekommt das aktuelle Menü schon')
 
             elif message.text.startswith('/stop'):
                 log.info('Received stop message')
@@ -254,7 +258,8 @@ class MensaBot(Thread):
                         str(message.chat_id),
                     )
                 except JobLookupError:
-                    send_message(message.chat_id, 'Ihr habt /start nicht gesendet')
+                    send_message(message.chat_id,
+                                 'Ihr habt /start nicht gesendet')
 
             confirm_message(message)
 

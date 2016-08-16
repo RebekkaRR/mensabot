@@ -47,7 +47,6 @@ DELTA_T = dt.timedelta(minutes=5)
 URL = 'http://www.stwdo.de/gastronomie/speiseplaene/' \
       'hauptmensa/wochenansicht-hauptmensa'
 
-BOT_URL = 'https://api.telegram.org/bot{token}'.format(token=sys.argv[1])
 
 
 def replace_all(regex, string, repl):
@@ -73,6 +72,7 @@ def extract_daily_menu(soup, weekday):
     menu, = pd.read_html(
         str(table),
     )
+    menu.dropna(inplace=True)
     menu.columns = ['gericht', 'beschreibung', 'counter']
     menu['gericht'] = menu.gericht.apply(
         lambda s: replace_all(ingredients_re, s, '')
@@ -240,7 +240,7 @@ class MensaBot(Thread):
                         hour=11,
                         jobstore='sqlite',
                         id=str(message.chat_id),
-			misfire_grace_time=15 * 60,
+                        misfire_grace_time=15 * 60,
                     )
                     send_message(
                         message.chat_id,
@@ -268,6 +268,7 @@ class MensaBot(Thread):
 
 
 if __name__ == '__main__':
+    BOT_URL = 'https://api.telegram.org/bot{token}'.format(token=sys.argv[1])
     bot = MensaBot()
     bot.start()
     log.info('bot running')

@@ -34,7 +34,7 @@ file_handler.setFormatter(formatter)
 log.addHandler(stream_handler)
 log.addHandler(file_handler)
 
-ingredients_re = re.compile('[(]([0-9]+,? ?)+[)] *')
+ingredients_re = re.compile('[(]([0-9]+[a-z]?,? ?)+[)] *')
 WEEKDAYS = [
     'montag',
     'dienstag',
